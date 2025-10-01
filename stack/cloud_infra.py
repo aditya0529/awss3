@@ -1,7 +1,6 @@
 from constructs import Construct
 
-from  stack.jumphost  import MsgDltJumpHost
-
+from construct.jumphost import GpiJumpHost
 from aws_cdk import (
     Duration,
     RemovalPolicy,
@@ -1034,6 +1033,18 @@ def script_handler(events, context):
         # vpc lookup from account
         vpc = self.lookup_vpc(config=config)
 
+        # Create Jump host
+        if self.region == config['deployment_regions'].split(",")[0].strip():
+            _jump_host = GpiJumpHost(
+                self,
+                construct_id="sw-gpi-ptapii-jump-host",
+                stack_config=config,
+                vpc=vpc,
+                subnets=self.lookup_subnet(subnet_1=f"{config['workload_subnet_1_' + self.region]}",
+                                           subnet_2=f"{config['workload_subnet_1_' + self.region]}")
+            ).launch_jump_host()
+
+
         # ECS, LB and Endpoint for API backend App
         api_ecs_task_execution_role = self.create_task_execution_role(config=config,
                                                                       repo_name=config['ecr_repo_name'],
@@ -1041,15 +1052,6 @@ def script_handler(events, context):
         ecs_task_role = self.create_task_role(config=config)
 
         hosted_zone = self.get_hosted_zone(config=config)
-
-        _jump_host = MsgDltJumpHost(
-            self,
-            Utils.resource_id_helper("jump-host"),
-            stack_config=stack_config,
-            network=_network,
-            efs_fs=_efs
-        ).launch_jump_host()
-
 
         # create ECS Farget cluster
         cluster = self.create_ecs_cluster(config=config, vpc=vpc)
