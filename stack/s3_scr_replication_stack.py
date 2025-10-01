@@ -96,31 +96,32 @@ class S3SourceStack(Stack):
                 "AccessControlTranslation": {
                     "Owner": "Destination"
                 },
-                "Account": f"{config['s3_replication_account']}",
-                "ReplicationTime": {
-                    "Status": "Enabled",
-                    "Time": {
-                        "Minutes": 15
-                    }
-                },
-                "Metrics": {
-                    "Status": "Enabled",
-                    "EventThreshold": {
-                        "Minutes": 15
-                    }
-                }
+                "Account": f"{config['s3_replication_account']}"
             },
-            "Status": "Enabled",
-            "DeleteMarkerReplication": {
-                "Status": "Enabled"
-            },
-            "Priority": 1
+            "Status": "Enabled"
         }
         
-        # Add filter only if prefix is not empty
+        # Add filter  only if prefix is not empty
         if config.get('s3_filter_prefix', '').strip():
+            # With filter: can use advanced replication features
             replication_rule_dict["Filter"] = {
                 "Prefix": f"{config['s3_filter_prefix']}"
+            }
+            replication_rule_dict["Priority"] = 1
+            replication_rule_dict["DeleteMarkerReplication"] = {
+                "Status": "Enabled"
+            }
+            replication_rule_dict["Destination"]["ReplicationTime"] = {
+                "Status": "Enabled",
+                "Time": {
+                    "Minutes": 15
+                }
+            }
+            replication_rule_dict["Destination"]["Metrics"] = {
+                "Status": "Enabled",
+                "EventThreshold": {
+                    "Minutes": 15
+                }
             }
         
         cfn_bucket.add_property_override(
