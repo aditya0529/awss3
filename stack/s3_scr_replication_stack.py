@@ -9,17 +9,21 @@ from aws_cdk import (
 
 
 class S3SourceStack(Stack):
-    def create_source_s3_policy(self, s3_bucket_arn: str,s3_dest_bucket_arn: str) -> list:
+    def create_source_s3_policy(self, s3_bucket_arn: str, s3_dest_bucket_arn: str, second_region: str) -> list:
         """
         Parameters
         ----------
         s3_bucket_arn : str
-            S3 resource arn
+            S3 source bucket arn
+        s3_dest_bucket_arn : str
+            S3 destination bucket arn
+        second_region : str
+            Second region prefix for filtering objects
 
         Returns
         -------
-        dict
-            IAM policy statement with specific permission
+        list
+            IAM policy statements with specific permissions restricted to second_region/* objects
         """
         return [
             {
@@ -29,7 +33,7 @@ class S3SourceStack(Stack):
                     "s3:GetObjectVersionAcl",
                     "s3:GetObjectVersionTagging"
                 ],
-                "Resource": [f"{s3_bucket_arn}/*"]
+                "Resource": [f"{s3_bucket_arn}/{second_region}/*"]
             },
             {
                 "Effect": "Allow",
@@ -46,7 +50,7 @@ class S3SourceStack(Stack):
                     "s3:ReplicateDelete",
                     "s3:ReplicateTags"
                 ],
-                "Resource": [f"{s3_dest_bucket_arn}/*"]
+                "Resource": [f"{s3_dest_bucket_arn}/{second_region}/*"]
             }
         ]
 
@@ -141,7 +145,8 @@ class S3SourceStack(Stack):
         # Add policies for first bucket pair
         for statement_json in self.create_source_s3_policy(
                 s3_bucket_arn=f"arn:aws:s3:::{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['first_region']}-{config['resource_suffix']}",
-                s3_dest_bucket_arn=f"arn:aws:s3:::{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}"):
+                s3_dest_bucket_arn=f"arn:aws:s3:::{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}",
+                second_region=config['second_region']):
             policy_statement = iam.PolicyStatement.from_json(statement_json)
             replication_role.add_to_policy(policy_statement)
         
