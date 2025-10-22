@@ -33,14 +33,13 @@ def apply_tags(stack, config):
 if __name__ == "__main__":
     config_parser = configparser.ConfigParser()
     config_parser.read(filenames="resource.config")
-    branch_name = os.getenv("SRC_BRANCH", "dev")
+    branch_name = os.getenv("SRC_BRANCH", "paclive")
     config = config_parser[branch_name]
 
     app = cdk.App()
 
 
     # Create destination stack first (in second region)
-
     cdk_destination_stack = S3destinationStack(
         app,
         f"{config['app_infra_replication_stack_name']}",

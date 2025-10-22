@@ -9,23 +9,18 @@ from aws_cdk import (
 
 
 class S3destinationStack(Stack):
-    def create_destination_s3_policy(self, s3_bucket_arn: str, second_region: str) -> dict:
-        """
-        Create bucket policy for destination bucket.
-        Restricts replication to only objects with second_region/* prefix.
-        """
+    def create_destination_s3_policy(self, s3_bucket_arn: str) -> dict:
         return {
             "Action": [
-                "s3:ReplicateObject",
-                "s3:ReplicateDelete",
-                "s3:ReplicateTags"
+                "s3:ReplicateObject"
             ],
             "Effect": "Allow",
             "Resource": [
-                f"{s3_bucket_arn}/{second_region}/*"
+                f"{s3_bucket_arn}",
+                f"{s3_bucket_arn}/*"
             ],
-            "Principal": {"Service": "s3.amazonaws.com"},
-            "Sid": "AllowReplicationOfSecondRegionObjects"
+            "Principal": iam.ServicePrincipal("s3.amazonaws.com"),
+            "Sid": "AllowAccessToStoreObjects"
         }
 
     def create_bucket(self, bucket_id: str, bucket_name: str, config):
@@ -49,12 +44,12 @@ class S3destinationStack(Stack):
                            )]
                            )
         
-        # Add replication policy - only allow replication of second_region/* objects
-        replication_policy = self.create_destination_s3_policy(
-            s3_bucket_arn=bucket.bucket_arn,
-            second_region=config['second_region']
+        policy_statement = iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=["s3:GetObject"],
+            resources=[bucket.bucket_arn + "/*"],
+            principals=[iam.ServicePrincipal("s3.amazonaws.com")]
         )
-        policy_statement = iam.PolicyStatement.from_json(replication_policy)
         bucket.add_to_resource_policy(policy_statement)
 
         # Add Object Lock configuration using CfnBucket

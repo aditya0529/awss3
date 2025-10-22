@@ -850,6 +850,7 @@ def script_handler(events, context):
                 "JksSourceBucket",
                 bucket_name=bucket_name
             )
+            print(f"Referencing SOURCE bucket: {bucket_name}")
             
         elif self.region == config['second_region']:
             # Reference the destination bucket in second region
@@ -859,8 +860,10 @@ def script_handler(events, context):
                 "JksDestinationBucket",
                 bucket_name=bucket_name
             )
+            print(f"Referencing DESTINATION bucket: {bucket_name}")
         else:
             # Not in first or second region - skip JKS integration
+            print(f"Region {self.region} not configured for JKS integration. Skipping.")
             return
 
         # 2. Lambda function to process uploaded JKS files
@@ -908,7 +911,7 @@ def script_handler(events, context):
             handler="jks_integration.handler",
             code=_lambda.Code.from_asset("lambda"),
             environment={
-                "SECRET_ARN": jks_secret.secret_arn,
+                "SECRET_NAME": jks_secret.secret_arn,
                 "PASSWORD_SECRET_ARN": password_secret.secret_arn,
                 "CLIENT_SECRET_ARN": client_secret.secret_arn
             },

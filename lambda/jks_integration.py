@@ -6,9 +6,9 @@ from botocore.exceptions import ClientError
 s3 = boto3.client("s3")
 secrets = boto3.client("secretsmanager")
 
-SECRET_ARN = os.environ["SECRET_ARN"]
-PASSWORD_SECRET_ARN = os.environ["PASSWORD_SECRET_ARN"]
-CLIENT_SECRET_ARN = os.environ["CLIENT_SECRET_ARN"]
+SECRET_NAME = os.environ["SECRET_NAME"]
+PASSWORD_SECRET_NAME = os.environ["PASSWORD_SECRET_ARN"]
+CLIENT_SECRET_NAME = os.environ["CLIENT_SECRET_ARN"]
 CURRENT_REGION = os.environ["AWS_REGION"]
 
 
@@ -86,13 +86,13 @@ def handler(event, context):
 
             # Determine which secret to update based on filename
             if filename.endswith(".jks"):
-                secret_arn = SECRET_ARN
+                secret_name = SECRET_NAME
                 secret_type = "JKS keystore"
             elif filename == "keystore.password":
-                secret_arn = PASSWORD_SECRET_ARN
+                secret_name = PASSWORD_SECRET_NAME
                 secret_type = "keystore password"
             elif filename == "client.password":
-                secret_arn = CLIENT_SECRET_ARN
+                secret_name = CLIENT_SECRET_NAME
                 secret_type = "client password"
             else:
                 error_msg = f"Unsupported filename: {filename}. Must be: *.jks, keystore.password, or client.password"
@@ -101,10 +101,10 @@ def handler(event, context):
 
             # Update secret
             secrets.put_secret_value(
-                SecretId=secret_arn,
+                SecretId=secret_name,
                 SecretString=data
             )
-            print(f'✓ Successfully updated {secret_type} secret ({secret_arn}) with content from {key}')
+            print(f'✓ Successfully updated {secret_type} secret ({secret_name}) with content from {key}')
             
             # Cleanup
             os.remove(tmp_path)
