@@ -37,6 +37,13 @@ class cloud_infra(Stack):
         # ------------------------------------------------------------------
         # IAM Role for Automation execution (trusts SSM + specific source account)
         # ------------------------------------------------------------------
+
+        if config['app_env'] in ['pilot', 'live']:
+            network_env = "prod"
+        else:
+            network_env = "nonprod"
+
+
         combined_principals = iam.CompositePrincipal(iam.ServicePrincipal("ssm.amazonaws.com").with_conditions({
             "StringEquals": {
                 "aws:SourceAccount": [ config['monitoring_command_control_account'], config['workload_account'] ]
@@ -47,7 +54,7 @@ class cloud_infra(Stack):
         }),
             iam.AccountPrincipal(config["monitoring_command_control_account"]).with_conditions({
                 "ArnLike": {
-                    "aws:PrincipalARN": f"arn:aws:iam::{config['monitoring_command_control_account']}:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_sw-nonprod-moncc-cmc-fin-ops*"
+                    "aws:PrincipalARN": f"arn:aws:iam::{config['monitoring_command_control_account']}:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_sw-{network_env}-moncc-cmc-fin-ops*"
                 },
                 "StringEquals": {
                     "aws:PrincipalOrgID": config['main_lz_org_id']
@@ -752,7 +759,7 @@ def script_handler(events, context):
             filter_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-event-subfilter-{config['resource_suffix']}",
             filter_pattern="{ $.event.kind = Alert }",
             log_group_name=log_group.log_group_name,
-            destination_arn=f"arn:aws:lambda:{self.region}:{config['workload_account']}:function:{config['resource_prefix']}-monitor-lambda-sns-forwarder-{config['monitoring_env']}-{self.region}-{config['resource_suffix']}"
+            destination_arn=f"arn:aws:lambda:{self.region}:{config['workload_account']}:function:{config['resource_prefix']}-monitor-lambda-sns-forwarder-{config['monitoring_env']}-{self.region}-main-aws"
         )
 
         logs.CfnSubscriptionFilter(
@@ -761,7 +768,7 @@ def script_handler(events, context):
             filter_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-oasis-subfilter-{config['resource_suffix']}",
             filter_pattern="common cloud account",
             log_group_name=log_group.log_group_name,
-            destination_arn=f"arn:aws:logs:{self.region}:{config['monitoring_tools_account']}:destination:{config['resource_prefix']}-oasis-{config['service_name']}-{config['app_name']}-{config['monitoring_env']}-cwdestination-{config['resource_suffix']}"
+            destination_arn=f"arn:aws:logs:{self.region}:{config['monitoring_tools_account']}:destination:{config['resource_prefix']}-oasis-{config['service_name']}-{config['app_name']}-{config['monitoring_env']}-cwdestination-main-aws"
         )
 
     def create_ecs_cloudwatch_alarms(self, config, fargate_service, sns_topic):
@@ -827,27 +834,37 @@ def script_handler(events, context):
         return jks_secret
 
     def setup_jks_integration(self, config, jks_secret, password_secret, client_secret):
-        # 1. S3 bucket for uploading JKS files
-        jks_bucket = s3.Bucket(
-            self,
-            f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secret-s3-{self.region}-{config['resource_suffix']}",
-            bucket_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secret-s3-{self.region}-{config['resource_suffix']}",
-            encryption=s3.BucketEncryption.S3_MANAGED,
-            minimum_tls_version=1.2,
-            object_ownership=s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
-            object_lock_enabled=False,
-            versioned=True,
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            removal_policy=RemovalPolicy.DESTROY,
-            enforce_ssl=True,
-            lifecycle_rules=[s3.LifecycleRule(
-                enabled=True,
-                id=f"secret-s3-lifecycle",
-                noncurrent_version_expiration=Duration.days(180),
-                noncurrent_versions_to_retain=5
+        """
+        Setup Lambda function for JKS integration.
+        References existing S3 bucket created by S3SourceStack or S3destinationStack.
+        """
+        
+        # Reference existing S3 bucket based on current region
+        jks_bucket = None
+        
+        if self.region == config['first_region']:
+            # Reference the source bucket in first region
+            bucket_name = f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['first_region']}-{config['resource_suffix']}"
+            jks_bucket = s3.Bucket.from_bucket_name(
+                self,
+                "JksSourceBucket",
+                bucket_name=bucket_name
             )
-            ]
-        )
+            print(f"Referencing SOURCE bucket: {bucket_name}")
+            
+        elif self.region == config['second_region']:
+            # Reference the destination bucket in second region
+            bucket_name = f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}"
+            jks_bucket = s3.Bucket.from_bucket_name(
+                self,
+                "JksDestinationBucket",
+                bucket_name=bucket_name
+            )
+            print(f"Referencing DESTINATION bucket: {bucket_name}")
+        else:
+            # Not in first or second region - skip JKS integration
+            print(f"Region {self.region} not configured for JKS integration. Skipping.")
+            return
 
         # 2. Lambda function to process uploaded JKS files
 
@@ -862,11 +879,19 @@ def script_handler(events, context):
             iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole")
         )
 
-        # Permissions to read from S3 bucket
+        # Permissions to read/Delete objects from S3 bucket
         jks_lambda_fn_role.add_to_policy(
             iam.PolicyStatement(
-                actions=["s3:GetObject"],
-                resources=[f"{jks_bucket.bucket_arn}/*"]
+                actions=["s3:GetObject",
+                         "s3:GetObjectVersion",
+                         "s3:GetObjectVersionAttributes",
+                         "s3:DeleteObject",
+                         "s3:DeleteObjectVersion",
+                         "s3:ListBucketVersions",
+                         "s3:ListBucket"
+                         ],
+                resources=[f"{jks_bucket.bucket_arn}/*",
+                           f"{jks_bucket.bucket_arn}"]
             )
         )
 
@@ -877,7 +902,7 @@ def script_handler(events, context):
             )
         )
 
-        _lambda_name = f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secret-lambda-{config['resource_suffix']}"
+        _lambda_name = f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secret-lambda-{self.region}-{config['resource_suffix']}"
         jks_lambda_fn = _lambda.Function(
             self,
             _lambda_name,
@@ -886,17 +911,18 @@ def script_handler(events, context):
             handler="jks_integration.handler",
             code=_lambda.Code.from_asset("lambda"),
             environment={
-                "SECRET_NAME": jks_secret.secret_name,
+                "SECRET_NAME": jks_secret.secret_arn,
                 "PASSWORD_SECRET_ARN": password_secret.secret_arn,
                 "CLIENT_SECRET_ARN": client_secret.secret_arn
             },
             log_group=logs.LogGroup(self,
-                                    f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secret-lambda-lg-{config['resource_suffix']}",
+                                    f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secret-lambda-lg-{self.region}-{config['resource_suffix']}",
                                     log_group_name=f"/aws/logs/{_lambda_name}",
                                     retention=logs.RetentionDays.ONE_MONTH,
                                     removal_policy=RemovalPolicy.DESTROY,
                                     ),
-            role=jks_lambda_fn_role
+            role=jks_lambda_fn_role,
+            timeout=Duration.seconds(30)
         )
 
         # Permissions
@@ -914,7 +940,7 @@ def script_handler(events, context):
                 effect=iam.Effect.ALLOW,
                 principals=[jks_lambda_fn_role],
                 actions=["s3:GetObject"],
-                resources=[f"{jks_bucket.bucket_arn}/*.jks", f"{jks_bucket.bucket_arn}/*.password"]
+                resources=[f"{jks_bucket.bucket_arn}/*/*.jks", f"{jks_bucket.bucket_arn}/*/*.password"]
             )
         )
 
@@ -952,7 +978,7 @@ def script_handler(events, context):
                 effect=iam.Effect.DENY,
                 principals=[iam.AnyPrincipal()],
                 actions=["s3:GetObject"],
-                resources=[f"{jks_bucket.bucket_arn}/*.jks", f"{jks_bucket.bucket_arn}/*.password"],
+                resources=[f"{jks_bucket.bucket_arn}/*/*.jks", f"{jks_bucket.bucket_arn}/*/*.password"],
                 conditions={
                     "StringNotLike": {
                         "aws:PrincipalArn": [
@@ -963,23 +989,23 @@ def script_handler(events, context):
             )
         )
 
-        # S3 event notification for .jks files
+        # S3 event notification for .jks files (only for this region's prefix)
         jks_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(jks_lambda_fn),
-            s3.NotificationKeyFilter(suffix=".jks")
+            s3.NotificationKeyFilter(prefix=f"{self.region}/", suffix=".jks")
         )
 
-        # S3 event notification for .password files
+        # S3 event notification for .password files (only for this region's prefix)
         jks_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(jks_lambda_fn),
-            s3.NotificationKeyFilter(suffix=".password")
+            s3.NotificationKeyFilter(prefix=f"{self.region}/", suffix=".password")
         )
 
     def create_secret_resource_policy(self, config, secret, ecs_task_role, ecs_task_exec_role):
         human_role = f"assumed-role/AWSReservedSSO_{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-poweruser_*" if \
-            config['app_env'] in ['dev', 'si', 'pac'] else "user/ckwilliams"
+            config['app_env'] in ['dev', 'si', 'pac', 'paclive'] else "user/ckwilliams"
 
         statements = [
             # PutResourcePolicy for Deployment Role
@@ -1040,8 +1066,11 @@ def script_handler(events, context):
                 construct_id="sw-gpi-ptapii-jump-host",
                 stack_config=config,
                 vpc=vpc,
-                subnets=self.lookup_subnet(subnet_1=f"{config['workload_subnet_1_' + self.region]}",
-                                           subnet_2=f"{config['workload_subnet_1_' + self.region]}")
+                subnets=self.lookup_subnet(
+                    subnet_1=f"{config['workload_subnet_1_' + self.region]}",
+                    subnet_2=f"{config['workload_subnet_2_' + self.region]}"
+                ),
+                region=self.region
             ).launch_jump_host()
 
 
@@ -1115,7 +1144,8 @@ def script_handler(events, context):
 
         self.create_ecs_cloudwatch_alarms(config=config, fargate_service=api_service, sns_topic=sns_topic)
 
-        self.create_oasis_log_integrations(config=config, log_group=log_group)
+        # Uncomment it to integrate with Oasis
+        # self.create_oasis_log_integrations(config=config, log_group=log_group)
 
         self.setup_jks_integration(config=config, jks_secret=secret, password_secret=password_secret, client_secret=client_secret)
 

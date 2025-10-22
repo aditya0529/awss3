@@ -89,40 +89,35 @@ class S3SourceStack(Stack):
         )
         bucket.add_to_resource_policy(policy_statement)
 
-        # Configure replication
         replication_rule_dict = {
             "Destination": {
                 "Bucket": f"arn:aws:s3:::{dest_bucket_name}",
                 "AccessControlTranslation": {
                     "Owner": "Destination"
                 },
-                "Account": f"{config['s3_replication_account']}"
+                "Account": f"{config['s3_replication_account']}",
+                "ReplicationTime": {
+                    "Status": "Enabled",
+                    "Time": {
+                        "Minutes": 15
+                    }
+                },
+                "Metrics": {
+                    "Status": "Enabled",
+                    "EventThreshold": {
+                        "Minutes": 15
+                    }
+                }
             },
-            "Status": "Enabled"
-        }
-        
-        # Add filter  only if prefix is not empty
-        if config.get('s3_filter_prefix', '').strip():
-            # With filter: can use advanced replication features
-            replication_rule_dict["Filter"] = {
-                "Prefix": f"{config['s3_filter_prefix']}"
-            }
-            replication_rule_dict["Priority"] = 1
-            replication_rule_dict["DeleteMarkerReplication"] = {
+            "Status": "Enabled",
+            "Priority": 1,
+            "DeleteMarkerReplication": {
                 "Status": "Enabled"
+            },
+            "Filter": {
+                "Prefix": f"{config['second_region']}/"
             }
-            replication_rule_dict["Destination"]["ReplicationTime"] = {
-                "Status": "Enabled",
-                "Time": {
-                    "Minutes": 15
-                }
-            }
-            replication_rule_dict["Destination"]["Metrics"] = {
-                "Status": "Enabled",
-                "EventThreshold": {
-                    "Minutes": 15
-                }
-            }
+        }
         
         cfn_bucket.add_property_override(
             "ReplicationConfiguration.Role", replication_role.role_arn)
@@ -150,28 +145,18 @@ class S3SourceStack(Stack):
             policy_statement = iam.PolicyStatement.from_json(statement_json)
             replication_role.add_to_policy(policy_statement)
         
-        # Add policies for second bucket pair (temp)
-        for statement_json in self.create_source_s3_policy(
-                s3_bucket_arn=f"arn:aws:s3:::{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['first_region']}-{config['resource_suffix']}-temp",
-                s3_dest_bucket_arn=f"arn:aws:s3:::{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}-temp"):
-            policy_statement = iam.PolicyStatement.from_json(statement_json)
-            replication_role.add_to_policy(policy_statement)
+        # # Add policies for second bucket pair (temp)
+        # for statement_json in self.create_source_s3_policy(
+        #         s3_bucket_arn=f"arn:aws:s3:::{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['first_region']}-{config['resource_suffix']}-temp",
+        #         s3_dest_bucket_arn=f"arn:aws:s3:::{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}-temp"):
+        #     policy_statement = iam.PolicyStatement.from_json(statement_json)
+        #     replication_role.add_to_policy(policy_statement)
 
         # Create first source bucket (regular)
         self.bucket_1 = self.create_source_bucket(
-            bucket_id=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-src-{config['resource_suffix']}",
+            bucket_id=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['resource_suffix']}",
             bucket_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['first_region']}-{config['resource_suffix']}",
             dest_bucket_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}",
             replication_role=replication_role,
             config=config
-        )
-        
-        # Create second source bucket (temp)
-        self.bucket_2 = self.create_source_bucket(
-            bucket_id=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-src-temp-{config['resource_suffix']}",
-            bucket_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['first_region']}-{config['resource_suffix']}-temp",
-            dest_bucket_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}-temp",
-            replication_role=replication_role,
-            config=config,
-            suffix="-temp"
         )

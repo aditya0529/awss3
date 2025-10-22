@@ -1,9 +1,9 @@
 from aws_cdk import (
-aws_ec2 as ec2,
-aws_iam as iam,
-aws_logs as logs,
-Tags,
-RemovalPolicy,
+    aws_ec2 as ec2,
+    aws_iam as iam,
+    aws_logs as logs,
+    Tags,
+    RemovalPolicy,
 )
 from constructs import Construct
 import uuid
@@ -17,6 +17,7 @@ class GpiJumpHost(Construct):
                  stack_config,
                  vpc,
                  subnets,
+                 region,
                  # network: MsgDltNetwork,
                  **kwargs
                  ):
@@ -30,6 +31,7 @@ class GpiJumpHost(Construct):
         self._jump_host_sg = None
         self._jump_host_role = None
         self._vpc = vpc
+        self._region=region
 
     @property
     def jump_host_instance(self):
@@ -49,11 +51,11 @@ class GpiJumpHost(Construct):
 
     @property
     def jump_host_subnets(self):
-        print(self._stack_config['workload_subnet_1_us-east-1'])
+        print(self._stack_config[f'workload_subnet_1_{self._region}'])
         subnet_selection = ec2.SubnetSelection(
             subnet_filters=[
                 ec2.SubnetFilter.by_ids([
-                    self._stack_config['workload_subnet_1_us-east-1']
+                    self._stack_config['workload_subnet_1_{self._region}']
                 ])
             ]
         )
@@ -81,8 +83,8 @@ class GpiJumpHost(Construct):
     def _create_instance(self):
         self._jump_host_instance = ec2.Instance(
             self,
-            f"sw-gpi-ptappi-{self._stack_config['app_env']}-jump-host",
-            instance_name=f"sw-gpi-ptappi-{self._stack_config['app_env']}-jump-host",
+            f"sw-gpi-ptappi-{self._stack_config['app_env']}-{self._region}-jump-host",
+            instance_name=f"sw-gpi-ptappi-{self._stack_config['app_env']}-{self._region}-jump-host",
             instance_type=ec2.InstanceType.of(ec2.InstanceClass.T3,
                                               ec2.InstanceSize.MEDIUM),
             machine_image=ec2.LookupMachineImage(name="sw-cd-al2023baseami-0.2.0-patch.20250915T130208Z-ec2-main-aws"),
@@ -96,41 +98,41 @@ class GpiJumpHost(Construct):
             role=self._jump_host_role
         )
 
-        _jump_host_cfn_instance = self._jump_host_instance.node.default_child
-        _jump_host_cfn_instance.cfn_options.metadata = {
-            "guard": {
-                "SuppressedRules": [
-                    "EC2_IMDSV2_CHECK",
-                    "EC2_INSTANCES_IN_VPC"
-                ]
-            }
-        }
+        # _jump_host_cfn_instance = self._jump_host_instance.node.default_child
+        # _jump_host_cfn_instance.cfn_options.metadata = {
+        #     "guard": {
+        #         "SuppressedRules": [
+        #             "EC2_IMDSV2_CHECK",
+        #             "EC2_INSTANCES_IN_VPC"
+        #         ]
+        #     }
+        # }
 
-        _jump_host_cfn_instance.cfn_options.metadata = {
-            "guard": {
-                "SuppressedRules": ["EC2_INSTANCE_NO_PUBLIC_IP", "https://jira.swift.com:8443/browse/CCOE-8287"]
-            }
-        }
+        # _jump_host_cfn_instance.cfn_options.metadata = {
+        #     "guard": {
+        #         "SuppressedRules": ["EC2_INSTANCE_NO_PUBLIC_IP", "https://jira.swift.com:8443/browse/CCOE-8287"]
+        #     }
+        # }
 
-        _jump_host_cfn_instance.cfn_options.metadata = {
-            "guard": {
-                "SuppressedRules": ["INSTANCES_IN_VPC", "https://jira.swift.com:8443/browse/CCOE-8287"]
-            }
-        }
+        # _jump_host_cfn_instance.cfn_options.metadata = {
+        #     "guard": {
+        #         "SuppressedRules": ["INSTANCES_IN_VPC", "https://jira.swift.com:8443/browse/CCOE-8287"]
+        #     }
+        # }
 
         return self
 
     def _create_sg(self) -> ec2.SecurityGroup:
         sg = ec2.SecurityGroup(
             self,
-            f"sw-gpi-ptappi-{self._stack_config['app_env']}-jump-host-sg",
+            f"sw-gpi-ptappi-{self._stack_config['app_env']}-{self._region}-jump-host-sg",
             vpc=self._vpc,
             allow_all_ipv6_outbound=False,
             allow_all_outbound=False,
             description="Jump Host Security Group",
-            security_group_name=f"sw-gpi-ptappi-{self._stack_config['app_env']}-jump-host-sg"
+            security_group_name=f"sw-gpi-ptappi-{self._stack_config['app_env']}-{self._region}-jump-host-sg"
         )
-        Tags.of(sg).add("Name", f"sw-gpi-ptappi-{self._stack_config['app_env']}-jump-host-sg")
+        Tags.of(sg).add("Name", f"sw-gpi-ptappi-{self._stack_config['app_env']}-{self._region}-jump-host-sg")
 
         sg.add_egress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "Full outbound access")
 
@@ -152,8 +154,8 @@ class GpiJumpHost(Construct):
     def _create_role(self) -> iam.Role:
         _instance_role = iam.Role(
             self,
-            f"sw-gpi-ptappi-{self._stack_config['app_env']}-jump-host-role",
-            role_name=f"sw-gpi-ptappi-{self._stack_config['app_env']}-jump-host-role",
+            f"sw-gpi-ptappi-{self._stack_config['app_env']}-{self._region}-jump-host-role",
+            role_name=f"sw-gpi-ptappi-{self._stack_config['app_env']}-{self._region}-jump-host-role",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com")
         )
 

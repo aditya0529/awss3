@@ -73,9 +73,9 @@ class S3destinationStack(Stack):
             config=config
         )
         
-        # Create second destination bucket (temp)
-        self.bucket_2 = self.create_bucket(
-            bucket_id=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-dest-temp-{config['resource_suffix']}",
-            bucket_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}-temp",
-            config=config
-        )
+        # # Create second destination bucket (temp)
+        # self.bucket_2 = self.create_bucket(
+        #     bucket_id=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-dest-temp-{config['resource_suffix']}",
+        #     bucket_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}-temp",
+        #     config=config
+        # )
