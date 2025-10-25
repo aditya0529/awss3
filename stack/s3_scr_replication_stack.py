@@ -201,17 +201,18 @@ class S3SourceStack(Stack):
             f"ptapii-secret-lambda-role-{current_region}-{config['resource_suffix']}"
         )
         
-        # ALLOW Lambda role to access files
-        allow_policy = iam.PolicyStatement(
-            sid="AllowLambdaAccessToSensitiveFiles",
-            effect=iam.Effect.ALLOW,
-            principals=[iam.ArnPrincipal(lambda_role_arn)],
-            actions=["s3:GetObject"],
-            resources=[
+        # ALLOW Lambda role to access files (using raw policy)
+        allow_policy_json = {
+            "Sid": "AllowLambdaAccessToSensitiveFiles",
+            "Effect": "Allow",
+            "Principal": {"AWS": lambda_role_arn},
+            "Action": "s3:GetObject",
+            "Resource": [
                 f"{bucket.bucket_arn}/{current_region}/.jks",
                 f"{bucket.bucket_arn}/{current_region}/*.password"
             ]
-        )
+        }
+        allow_policy = iam.PolicyStatement.from_json(allow_policy_json)
         
         # DENY everyone else access to sensitive files
         deny_policy = iam.PolicyStatement(
