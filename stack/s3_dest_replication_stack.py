@@ -73,35 +73,44 @@ class S3destinationStack(Stack):
             f"ptapii-secret-lambda-role-{current_region}-{config['resource_suffix']}"
         )
         
-        # Policy 1: ALLOW Lambda role to access files
+        # Policy 1: ALLOW Lambda role to access files (using conditions - role doesn't need to exist yet)
         allow_policy_json = {
             "Sid": "AllowLambdaAccessToSensitiveFiles",
             "Effect": "Allow",
-            "Principal": {"AWS": lambda_role_arn},
+            "Principal": "*",
             "Action": "s3:GetObject",
             "Resource": [
                 f"{bucket.bucket_arn}/{current_region}/.jks",
                 f"{bucket.bucket_arn}/{current_region}/*.password"
-            ]
+            ],
+            "Condition": {
+                "StringEquals": {
+                    "aws:PrincipalAccount": config['workload_account']
+                },
+                "ArnLike": {
+                    "aws:PrincipalArn": lambda_role_arn
+                }
+            }
         }
         allow_policy = iam.PolicyStatement.from_json(allow_policy_json)
         
         # Policy 2: DENY everyone else access to sensitive files
-        deny_policy = iam.PolicyStatement(
-            sid="DenyAllOthersAccessToSensitiveFiles",
-            effect=iam.Effect.DENY,
-            principals=[iam.AnyPrincipal()],
-            actions=["s3:GetObject"],
-            resources=[
+        deny_policy_json = {
+            "Sid": "DenyAllOthersAccessToSensitiveFiles",
+            "Effect": "Deny",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": [
                 f"{bucket.bucket_arn}/{current_region}/.jks",
                 f"{bucket.bucket_arn}/{current_region}/*.password"
             ],
-            conditions={
+            "Condition": {
                 "StringNotLike": {
                     "aws:PrincipalArn": lambda_role_arn
                 }
             }
-        )
+        }
+        deny_policy = iam.PolicyStatement.from_json(deny_policy_json)
         
         # Add both policies to bucket
         bucket.add_to_resource_policy(allow_policy)
