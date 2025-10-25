@@ -833,38 +833,30 @@ def script_handler(events, context):
 
         return jks_secret
 
+    @staticmethod
+    def _get_secrets_bucket_name(config, region: str) -> str:
+        """Generate S3 secrets bucket name for a given region """
+        return f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{region}-{config['resource_suffix']}"
+    
+    def _is_region_configured(self, config, region: str) -> bool:
+        """Check if region is in deployment configuration """
+        deployment_regions = [r.strip() for r in config['deployment_regions'].split(",")]
+        return region in deployment_regions
+
     def setup_jks_integration(self, config, jks_secret, password_secret, client_secret):
-        """
-        Setup Lambda function for JKS integration.
-        References existing S3 bucket created by S3SourceStack or S3destinationStack.
-        """
-        
-        # Reference existing S3 bucket based on current region
-        jks_bucket = None
-        
-        if self.region == config['first_region']:
-            # Reference the source bucket in first region
-            bucket_name = f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['first_region']}-{config['resource_suffix']}"
-            jks_bucket = s3.Bucket.from_bucket_name(
-                self,
-                "JksSourceBucket",
-                bucket_name=bucket_name
-            )
-            print(f"Referencing SOURCE bucket: {bucket_name}")
-            
-        elif self.region == config['second_region']:
-            # Reference the destination bucket in second region
-            bucket_name = f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}"
-            jks_bucket = s3.Bucket.from_bucket_name(
-                self,
-                "JksDestinationBucket",
-                bucket_name=bucket_name
-            )
-            print(f"Referencing DESTINATION bucket: {bucket_name}")
-        else:
-            # Not in first or second region - skip JKS integration
-            print(f"Region {self.region} not configured for JKS integration. Skipping.")
+
+        if not self._is_region_configured(config, self.region):
+            print(f"Region {self.region} not in deployment_regions. Skipping JKS integration.")
             return
+
+        bucket_name = self._get_secrets_bucket_name(config, self.region)
+
+        jks_bucket = s3.Bucket.from_bucket_name(
+            self,
+            f"JksSecretsBucket-{self.region}",
+            bucket_name=bucket_name
+        )
+        print(f"Referencing secrets bucket in {self.region}: {bucket_name}")
 
         # 2. Lambda function to process uploaded JKS files
 

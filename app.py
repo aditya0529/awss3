@@ -30,6 +30,59 @@ def apply_tags(stack, config):
     Tags.of(stack).add("sw:environment", f"{config['app_env']}")
     Tags.of(stack).add("sw:cost_center", f"{config['cost_center']}")
 
+def get_deployment_regions(config) -> list:
+    return [r.strip() for r in config['deployment_regions'].split(",")]
+
+def should_enable_replication(config) -> bool:
+    return len(get_deployment_regions(config)) > 1
+
+def create_s3_stacks(app, config, synthesizer_factory):
+
+    enable_replication = should_enable_replication(config)
+    stacks = {}
+    
+    if enable_replication:
+
+        if 'second_region' not in config:
+            raise ValueError("'second_region' required for multi-region deployment")
+        if 'app_infra_replication_stack_name' not in config:
+            raise ValueError("'app_infra_replication_stack_name' required for replication")
+            
+        # Multi-region: Create destination stack first
+        dest_stack = S3destinationStack(
+            app,
+            f"{config['app_infra_replication_stack_name']}",
+            resource_config=config,
+            env=cdk.Environment(
+                account=config['workload_account'],
+                region=config['second_region']
+            ),
+            synthesizer=synthesizer_factory(config, config['second_region'])
+        )
+        apply_tags(dest_stack, config)
+        stacks['destination'] = dest_stack
+    
+    # Always create source stack with or without replication
+    source_stack = S3SourceStack(
+        app,
+        f"{config['app_infra_stack_name']}",
+        resource_config=config,
+        enable_replication=enable_replication,  # Key parameter
+        env=cdk.Environment(
+            account=config['workload_account'],
+            region=config['first_region']
+        ),
+        synthesizer=synthesizer_factory(config, config['first_region'])
+    )
+    apply_tags(source_stack, config)
+    
+    # Set dependency if multi-region
+    if enable_replication:
+        source_stack.add_dependency(stacks['destination'])
+    
+    stacks['source'] = source_stack
+    return stacks
+
 if __name__ == "__main__":
     config_parser = configparser.ConfigParser()
     config_parser.read(filenames="resource.config")
@@ -38,35 +91,17 @@ if __name__ == "__main__":
 
     app = cdk.App()
 
+    s3_stacks = create_s3_stacks(app, config, get_def_stack_synth)
 
-    # Create destination stack first (in second region)
-    cdk_destination_stack = S3destinationStack(
-        app,
-        f"{config['app_infra_replication_stack_name']}",
-        resource_config=config,
-        env=cdk.Environment(account=f"{config['workload_account']}",
-                            region=f"{config['second_region']}"),
-        synthesizer=get_def_stack_synth(config, config['second_region'])
-    )
+    source_stack = s3_stacks['source']
+    dest_stack = s3_stacks.get('destination')
 
-    # Create source stack (in first region)
-    cdk_s3_source_stack = S3SourceStack(
-        app,
-        f"{config['app_infra_stack_name']}",
-        resource_config=config,
-        env=cdk.Environment(account=f"{config['workload_account']}",
-                            region=f"{config['first_region']}"),
-        synthesizer=get_def_stack_synth(config, config['first_region'])
-    )
+
+    # Create infrastructure stacks for each configured region
+    deployment_regions = get_deployment_regions(config)
     
-    # Source stack depends on destination stack (destination must be created first)
-    cdk_s3_source_stack.add_dependency(cdk_destination_stack)
-    apply_tags(cdk_destination_stack, config)
-    apply_tags(cdk_s3_source_stack, config)
-
-
-    for region in config['deployment_regions'].split(","):
-        region_stack = f"{region}-"
+    for region in deployment_regions:
+        region_stack = f"{region}-"  # Already stripped in get_deployment_regions()
 
         # Application infra stack
         cdk_stack = cloud_infra(
@@ -79,11 +114,12 @@ if __name__ == "__main__":
         )
         apply_tags(cdk_stack, config)
         
-        # Add explicit dependencies to ensure S3 buckets exist before cloud_infra references them
+        # Ensure S3 buckets exist before cloud_infra references them
         if region == config['first_region']:
-            cdk_stack.add_dependency(cdk_s3_source_stack)
-        elif region == config['second_region']:
-            cdk_stack.add_dependency(cdk_destination_stack)
+            cdk_stack.add_dependency(source_stack)
+        elif dest_stack and region == config.get('second_region'):
+            cdk_stack.add_dependency(dest_stack)
+
 
         Aspects.of(app).add(AwsSolutionsChecks())
         NagSuppressions.add_stack_suppressions(cdk_stack, [

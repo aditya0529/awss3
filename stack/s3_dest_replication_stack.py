@@ -52,6 +52,8 @@ class S3destinationStack(Stack):
         )
         bucket.add_to_resource_policy(policy_statement)
 
+        self._add_bucket_file_policies(bucket, config)
+
         # Add Object Lock configuration using CfnBucket
         cfn_bucket = bucket.node.default_child
         cfn_bucket.object_lock_configuration = {
@@ -59,6 +61,50 @@ class S3destinationStack(Stack):
         }
         
         return bucket
+    
+    def _add_bucket_file_policies(self, bucket: s3.Bucket, config) -> None:
+
+        current_region = self.region
+        
+        # Build Lambda role ARN dynamically
+        lambda_role_arn = (
+            f"arn:aws:iam::{config['workload_account']}:role/"
+            f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-"
+            f"ptapii-secret-lambda-role-{current_region}-{config['resource_suffix']}"
+        )
+        
+        # Policy 1: ALLOW Lambda role to access sensitive files
+        allow_policy = iam.PolicyStatement(
+            sid="AllowLambdaAccessToSensitiveFiles",
+            effect=iam.Effect.ALLOW,
+            principals=[iam.ArnPrincipal(lambda_role_arn)],
+            actions=["s3:GetObject"],
+            resources=[
+                f"{bucket.bucket_arn}/{current_region}/.jks",
+                f"{bucket.bucket_arn}/{current_region}/*.password"
+            ]
+        )
+        
+        # Policy 2: DENY everyone else access to sensitive files
+        deny_policy = iam.PolicyStatement(
+            sid="DenyAllOthersAccessToSensitiveFiles",
+            effect=iam.Effect.DENY,
+            principals=[iam.AnyPrincipal()],
+            actions=["s3:GetObject"],
+            resources=[
+                f"{bucket.bucket_arn}/{current_region}/.jks",
+                f"{bucket.bucket_arn}/{current_region}/*.password"
+            ],
+            conditions={
+                "StringNotLike": {
+                    "aws:PrincipalArn": lambda_role_arn
+                }
+            }
+        )
+        
+        # Add both policies to bucket
+        bucket.add_to_resource_policy(allow_policy)
+        bucket.add_to_resource_policy(deny_policy)
 
     def __init__(self, scope: Construct, construct_id: str, resource_config, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -72,10 +118,3 @@ class S3destinationStack(Stack):
             bucket_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}",
             config=config
         )
-        
-        # # Create second destination bucket (temp)
-        # self.bucket_2 = self.create_bucket(
-        #     bucket_id=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-dest-temp-{config['resource_suffix']}",
-        #     bucket_name=f"{config['resource_prefix']}-{config['service_name']}-{config['app_env']}-{config['app_name']}-secrets-s3-{config['second_region']}-{config['resource_suffix']}-temp",
-        #     config=config
-        # )
